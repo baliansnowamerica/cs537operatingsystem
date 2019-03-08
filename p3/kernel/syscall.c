@@ -16,9 +16,36 @@
 // Fetch the int at addr from process p.
 int
 fetchint(struct proc *p, uint addr, int *ip)
-{
-  if(addr >= p->sz || addr+4 > p->sz)
-    return -1;
+{ 
+  // if addr is in the first 4 unmapping pages, return -1
+  if (addr < PGSIZE*4) {
+    cprintf("fetchint: proc %s, pid %d first 4 unmapping pages \n", p->name, p->pid);
+    return -1;  
+  }
+
+  // if addr is larger than USERTOP = 0xA0000 = 655360, return -1
+  if (addr >= USERTOP || addr + 4 > USERTOP) {
+    cprintf("fetchint: proc %s, pid %d larger than USERTOP \n", p->name, p->pid);
+    return -1;  
+  }
+
+  // if addr is in the unmapping pages between heap and stack, return -1
+  // (uint) PGROUNDDOWN(p->tf->esp)
+  if (addr >= p->sz && addr < p->stack_end) {
+    cprintf("fetchint addr: proc %s, pid %d heap-stack unmapping pages \n", proc->name, proc->pid);
+    return -1; 
+  }
+
+  // if addr+4 is in the unmapping pages between heap and stack, return -1
+  // (uint) PGROUNDDOWN(p->tf->esp)
+  if (addr + 4 > p->sz && addr + 4 < p->stack_end) {
+    cprintf("fetchint addr+4: proc %s, pid %d heap-stack unmapping pages \n", proc->name, proc->pid);
+    return -1; 
+  }
+
+  // original
+  // if(addr >= p->sz || addr+4 > p->sz) return -1;
+
   *ip = *(int*)(addr);
   return 0;
 }
@@ -28,13 +55,40 @@ fetchint(struct proc *p, uint addr, int *ip)
 // Returns length of string, not including nul.
 int
 fetchstr(struct proc *p, uint addr, char **pp)
-{
+{ 
   char *s, *ep;
 
-  if(addr >= p->sz)
-    return -1;
+  // if addr is in the first 4 unmapping pages, return -1
+  if (addr < PGSIZE*4) {
+    cprintf("fetchstr: proc %s, pid %d first 4 unmapping pages \n", p->name, p->pid);
+    return -1;  
+  }
+
+  // if addr is larger than USERTOP = 0xA0000 = 655360, return -1
+  if (addr >= USERTOP) {
+    cprintf("fetchstr: proc %s, pid %d larger than USERTOP \n", p->name, p->pid);
+    return -1;  
+  }
+
+  // if addr is in the unmapping pages between heap and stack, return -1
+  // (uint) PGROUNDDOWN(p->tf->esp)
+  if (addr >= p->sz && addr < p->stack_end) {
+    cprintf("fetchstr: proc %s, pid %d heap-stack unmapping pages \n", proc->name, proc->pid);
+    return -1; 
+  }
+
+  // original
+  // if(addr >= p->sz) return -1;
+
   *pp = (char*)addr;
-  ep = (char*)p->sz;
+
+  // if addr is in code/heap then last legal addr is p->sz.  
+  if (addr < p->sz) 
+    ep = (char*) p->sz;
+  // otherwise, addr is in stack and last legal addr is USERTOP.
+  else
+    ep = (char*) USERTOP;
+
   for(s = *pp; s < ep; s++)
     if(*s == 0)
       return s - *pp;
@@ -53,13 +107,43 @@ argint(int n, int *ip)
 // lies within the process address space.
 int
 argptr(int n, char **pp, int size)
-{
+{ 
   int i;
   
   if(argint(n, &i) < 0)
     return -1;
-  if((uint)i >= proc->sz || (uint)i+size > proc->sz)
-    return -1;
+
+  // cprintf("argptr i: %d, code_end: %d, sz: %d, stack_end: %d\n", (uint) i, proc->code_end, proc->sz, proc->stack_end);
+  
+  // if i is in the first 4 unmapping pages, return -1
+  if ((uint) i < PGSIZE*4) {
+    cprintf("argptr: proc %s, pid %d 4 unmapping pages \n", proc->name, proc->pid);
+    return -1;  
+  }
+
+  // if i is larger than USERTOP = 0xA0000 = 655360, return -1
+  if ((uint) i >= USERTOP || (uint) (i+size) > USERTOP) {
+    cprintf("argptr: proc %s, pid %d larger than USERTOP \n", proc->name, proc->pid);
+    return -1;  
+  }
+
+  // if i is in the unmapping pages between heap and stack, return -1
+  // (uint) PGROUNDDOWN(proc->tf->esp)
+  if ((uint) i >= proc->sz && (uint) i < proc->stack_end) {
+    cprintf("argptr i: proc %s, pid %d heap-stack unmapping pages \n", proc->name, proc->pid);
+    return -1; 
+  }
+
+  // if i+size is in the unmapping pages between heap and stack, return -1
+  // (uint) PGROUNDDOWN(proc->tf->esp)
+  if ((uint) i + size > proc->sz && (uint) i +size < proc->stack_end) {
+    cprintf("argptr i+size: proc %s, pid %d heap-stack unmapping pages \n", proc->name, proc->pid);
+    return -1; 
+  }
+
+  // original 
+  // if((uint)i >= proc->sz || (uint)i+size > proc->sz) return -1;
+
   *pp = (char*)i;
   return 0;
 }

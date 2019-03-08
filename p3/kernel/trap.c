@@ -44,6 +44,20 @@ trap(struct trapframe *tf)
     return;
   }
 
+  if (tf->trapno == T_PGFLT) {
+    uint addr = rcr2();
+    // cprintf("\ntrap.c addr: %d, sz+pgsize*5: %d, pgroundown esp: %d\n", addr, proc->sz+PGSIZE*5, proc->stack_end);
+    if (addr >= proc->sz+PGSIZE*5 && 
+        addr < proc->stack_end &&
+        addr >= proc->stack_end - PGSIZE) {
+      // cprintf("need to grow stack! \n");
+      if (!grow_stack(addr)) {
+        // cprintf("stack grown \n");
+        return;
+      }
+    }
+  }
+
   switch(tf->trapno){
   case T_IRQ0 + IRQ_TIMER:
     if(cpu->id == 0){

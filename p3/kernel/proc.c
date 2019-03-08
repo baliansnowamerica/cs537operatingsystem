@@ -106,8 +106,11 @@ int
 growproc(int n)
 {
   uint sz;
-  
   sz = proc->sz;
+
+  if (sz + n > proc->stack_end - PGSIZE*5)
+    return -1;
+  
   if(n > 0){
     if((sz = allocuvm(proc->pgdir, sz, sz + n)) == 0)
       return -1;
@@ -140,6 +143,7 @@ fork(void)
     np->state = UNUSED;
     return -1;
   }
+  np->stack_end = proc->stack_end; // top virtual address of the top page of stack
   np->sz = proc->sz;
   np->parent = proc;
   *np->tf = *proc->tf;

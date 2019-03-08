@@ -48,13 +48,17 @@ exec(char *path, char **argv)
   iunlockput(ip);
   ip = 0;
 
-  // Allocate a one-page stack at the next page boundary
+  // where code ends and heap starts
   sz = PGROUNDUP(sz);
-  if((sz = allocuvm(pgdir, sz, sz + PGSIZE)) == 0)
+
+  // sp is where the first page of stack ends, and USERTOP is where it starts
+  sp = USERTOP - PGSIZE;
+  
+  // allocate a one-page stack for the last page, which ends at USERTOP
+  if((sp = allocuvm(pgdir, sp, sp + PGSIZE)) == 0)
     goto bad;
 
   // Push argument strings, prepare rest of stack in ustack.
-  sp = sz;
   for(argc = 0; argv[argc]; argc++) {
     if(argc >= MAXARG)
       goto bad;
@@ -84,8 +88,9 @@ exec(char *path, char **argv)
   oldpgdir = proc->pgdir;
   proc->pgdir = pgdir;
   proc->sz = sz;
-  proc->tf->eip = elf.entry;  // main
-  proc->tf->esp = sp;
+  proc->tf->eip = elf.entry;                // main
+  proc->tf->esp = sp;                       // stack end
+  proc->stack_end = (uint) PGROUNDDOWN(sp); // allocated stack page end
   switchuvm(proc);
   freevm(oldpgdir);
 

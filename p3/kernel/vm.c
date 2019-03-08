@@ -318,6 +318,20 @@ copyuvm(pde_t *pgdir, uint sz)
     if(mappages(d, (void*)i, PGSIZE, PADDR(mem), PTE_W|PTE_U) < 0)
       goto bad;
   }
+  
+  for(i = proc->stack_end; i < USERTOP; i+=PGSIZE) {
+    if((pte = walkpgdir(pgdir, (void*)i, 0)) == 0)
+      panic("copyuvm: pte should exist");
+    if(!(*pte & PTE_P))
+      panic("copyuvm: page not present");
+    pa = PTE_ADDR(*pte);
+    if((mem = kalloc()) == 0)
+      goto bad;
+    memmove(mem, (char*)pa, PGSIZE);
+    if(mappages(d, (void*)i, PGSIZE, PADDR(mem), PTE_W|PTE_U) < 0)
+      goto bad;
+  }
+
   return d;
 
 bad:
@@ -363,4 +377,30 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
     va = va0 + PGSIZE;
   }
   return 0;
+}
+
+int grow_stack(uint addr) {
+  // page directory of current process
+  pde_t* pgdir;
+  pgdir = proc->pgdir;
+  
+  // new stack top, which is an address pointer
+  uint newST; 
+
+  //check if there is space to grow
+  if (PGROUNDUP(proc->sz) >= proc->stack_end - PGSIZE*5)
+    goto bad;
+
+  // allocate a page of physical address 
+  newST = proc->stack_end - PGSIZE;
+  if (allocuvm(pgdir, newST, newST + PGSIZE) == 0)
+      goto bad;
+
+  // update curST
+  proc->stack_end = newST;
+  
+  return 0;
+
+  bad:
+  return -1;
 }
