@@ -61,6 +61,8 @@ enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
 // Per-process state
 struct proc {
+  uint shm[3];                 // shared memory
+  uint numsh;                  // number of shared pages
   uint stack_end;              // address position where allocated stack pages end
   uint sz;                     // Size of process memory (bytes)
   pde_t* pgdir;                // Page table

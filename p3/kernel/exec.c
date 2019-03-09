@@ -91,6 +91,10 @@ exec(char *path, char **argv)
   proc->tf->eip = elf.entry;                // main
   proc->tf->esp = sp;                       // stack end
   proc->stack_end = (uint) PGROUNDDOWN(sp); // allocated stack page end
+  proc->shm[0] = 0;
+  proc->shm[1] = 0;
+  proc->shm[2] = 0;
+  proc->numsh = 0;
   switchuvm(proc);
   freevm(oldpgdir);
 

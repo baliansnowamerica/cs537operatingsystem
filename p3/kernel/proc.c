@@ -144,6 +144,10 @@ fork(void)
     return -1;
   }
   np->stack_end = proc->stack_end; // top virtual address of the top page of stack
+  np->shm[0] = proc->shm[0]; // inherit parent's shm
+  np->shm[1] = proc->shm[1];
+  np->shm[2] = proc->shm[2];
+  np->numsh = proc->numsh;
   np->sz = proc->sz;
   np->parent = proc;
   *np->tf = *proc->tf;

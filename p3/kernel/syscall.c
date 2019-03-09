@@ -17,10 +17,22 @@
 int
 fetchint(struct proc *p, uint addr, int *ip)
 { 
-  // if addr is in the first 4 unmapping pages, return -1
-  if (addr < PGSIZE*4) {
+  // if addr is in the first unmapping pages, return -1
+  if (addr < PGSIZE) {
     cprintf("fetchint: proc %s, pid %d first 4 unmapping pages \n", p->name, p->pid);
     return -1;  
+  }
+
+  // if addr is in shared pages, and whether that shared page is mapped
+  if ((uint) PGROUNDDOWN(addr) > p->numsh && addr < PGSIZE*4) {
+    cprintf("fetchint addr: proc %s, pid %d unmapping shared pages \n", p->name, p->pid);
+    return -1;
+  }
+
+  // if addr is in shared pages, and whether that shared page is mapped
+  if ((uint) PGROUNDDOWN(addr+4) > p->numsh && addr + 4 < PGSIZE*4) {
+    cprintf("fetchint addr+4: proc %s, pid %d unmapping shared pages \n", p->name, p->pid);
+    return -1;
   }
 
   // if addr is larger than USERTOP = 0xA0000 = 655360, return -1
@@ -30,14 +42,13 @@ fetchint(struct proc *p, uint addr, int *ip)
   }
 
   // if addr is in the unmapping pages between heap and stack, return -1
-  // (uint) PGROUNDDOWN(p->tf->esp)
   if (addr >= p->sz && addr < p->stack_end) {
     cprintf("fetchint addr: proc %s, pid %d heap-stack unmapping pages \n", proc->name, proc->pid);
     return -1; 
   }
 
   // if addr+4 is in the unmapping pages between heap and stack, return -1
-  // (uint) PGROUNDDOWN(p->tf->esp)
+  // addr+4 > p->sz ensures that whole of the 32 bit instruction lies within the process's size limit
   if (addr + 4 > p->sz && addr + 4 < p->stack_end) {
     cprintf("fetchint addr+4: proc %s, pid %d heap-stack unmapping pages \n", proc->name, proc->pid);
     return -1; 
@@ -58,10 +69,16 @@ fetchstr(struct proc *p, uint addr, char **pp)
 { 
   char *s, *ep;
 
-  // if addr is in the first 4 unmapping pages, return -1
-  if (addr < PGSIZE*4) {
+  // if addr is in the first unmapping pages, return -1
+  if (addr < PGSIZE) {
     cprintf("fetchstr: proc %s, pid %d first 4 unmapping pages \n", p->name, p->pid);
     return -1;  
+  }
+
+  // if addr is in shared pages, and whether that shared page is mapped
+  if ((uint) PGROUNDDOWN(addr) > p->numsh && addr < PGSIZE*4) {
+    cprintf("fetchstr: proc %s, pid %d unmapping shared pages \n", p->name, p->pid);
+    return -1;
   }
 
   // if addr is larger than USERTOP = 0xA0000 = 655360, return -1
@@ -108,17 +125,32 @@ argint(int n, int *ip)
 int
 argptr(int n, char **pp, int size)
 { 
+  // prepare an integer variable i, assign it with the address of the nth argument of user's initial calling
   int i;
-  
   if(argint(n, &i) < 0)
     return -1;
 
+  // ==============================================================================================
+  // check whether os can assign enough memory space for user's nth argument
+  // ==============================================================================================
+
   // cprintf("argptr i: %d, code_end: %d, sz: %d, stack_end: %d\n", (uint) i, proc->code_end, proc->sz, proc->stack_end);
-  
-  // if i is in the first 4 unmapping pages, return -1
-  if ((uint) i < PGSIZE*4) {
+  // if i is in the first unmapping pages, return -1
+  if ((uint) i < PGSIZE) {
     cprintf("argptr: proc %s, pid %d 4 unmapping pages \n", proc->name, proc->pid);
     return -1;  
+  }
+
+  // if addr is in shared pages, and whether that shared page is mapped
+  if ((uint) PGROUNDDOWN(i) > proc->numsh && i < PGSIZE*4) {
+    cprintf("argptr i: proc %s, pid %d unmapping shared pages \n", proc->name, proc->pid);
+    return -1;
+  }
+
+  // if addr is in shared pages, and whether that shared page is mapped
+  if ((uint) PGROUNDDOWN(i + size) > proc->numsh && i + size < PGSIZE*4) {
+    cprintf("argptr i+size: proc %s, pid %d unmapping shared pages \n", proc->name, proc->pid);
+    return -1;
   }
 
   // if i is larger than USERTOP = 0xA0000 = 655360, return -1
@@ -144,7 +176,12 @@ argptr(int n, char **pp, int size)
   // original 
   // if((uint)i >= proc->sz || (uint)i+size > proc->sz) return -1;
 
-  *pp = (char*)i;
+  // ==============================================================================================
+  // check done
+  // ==============================================================================================
+  
+  //assign the output pointer char **pp to the address hold by i.
+  *pp = (char*) i;
   return 0;
 }
 
@@ -187,6 +224,7 @@ static int (*syscalls[])(void) = {
 [SYS_wait]    sys_wait,
 [SYS_write]   sys_write,
 [SYS_uptime]  sys_uptime,
+[SYS_shmget]  sys_shmget,
 };
 
 // Called on a syscall trap. Checks that the syscall number (passed via eax)
@@ -204,4 +242,16 @@ syscall(void)
             proc->pid, proc->name, num);
     proc->tf->eax = -1;
   }
+}
+
+// this fucntion is system call shared memory get (shmget)
+int sys_shmget(void) {
+  int page_number;
+  if (argint(0, &page_number) < 0) 
+    return 0; 
+
+  if (page_number < 0 || 2 < page_number)
+    return 0;
+
+  return (int) shmget(page_number);
 }

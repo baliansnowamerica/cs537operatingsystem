@@ -8,7 +8,8 @@
 
 extern char data[];  // defined in data.S
 
-static pde_t *kpgdir;  // for use in scheduler()
+static pde_t *kpgdir; // for use in scheduler()
+static pte_t sharedpg[3] = {NULL, NULL, NULL}; // shared page 0, 1, 2
 
 // Allocate one page table for the machine for the kernel address
 // space for scheduler processes.
@@ -197,6 +198,15 @@ inituvm(pde_t *pgdir, char *init, uint sz)
   memset(mem, 0, PGSIZE);
   mappages(pgdir, (void*) ADD, PGSIZE, PADDR(mem), PTE_W|PTE_U);
   memmove(mem, init, sz);
+
+  if (sharedpg[0] == NULL) {
+    for (int i=0; i<3; i++) {
+      char *mem;
+      mem = kalloc();
+      memset(mem, 0, PGSIZE);
+      sharedpg[i] = PADDR(mem);
+    }
+  }
 }
 
 // Load a program segment into pgdir.  addr must be page-aligned
@@ -286,7 +296,7 @@ freevm(pde_t *pgdir)
 
   if(pgdir == 0)
     panic("freevm: no pgdir");
-  deallocuvm(pgdir, USERTOP, 0);
+  deallocuvm(pgdir, USERTOP, ADD);
   for(i = 0; i < NPDENTRIES; i++){
     if(pgdir[i] & PTE_P)
       kfree((char*)PTE_ADDR(pgdir[i]));
@@ -403,4 +413,16 @@ int grow_stack(uint addr) {
 
   bad:
   return -1;
+}
+
+void *shmget(int page_number) {
+  // cprintf("proc->numsh: %d\n", proc->numsh);
+
+  if (proc->shm[page_number] == 0) {
+    proc->numsh = proc->numsh + PGSIZE;
+    mappages(proc->pgdir, (void*) proc->numsh, PGSIZE, sharedpg[page_number], PTE_W|PTE_U);
+    proc->shm[page_number] = proc->numsh;
+  }
+
+  return (void *) proc->shm[page_number];
 }

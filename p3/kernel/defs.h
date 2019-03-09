@@ -154,6 +154,7 @@ void            uartintr(void);
 void            uartputc(int);
 
 // vm.c
+void*           shmget(int);
 int             grow_stack(uint addr);
 void            seginit(void);
 void            kvmalloc(void);
