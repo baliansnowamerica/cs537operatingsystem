@@ -199,6 +199,9 @@ inituvm(pde_t *pgdir, char *init, uint sz)
   mappages(pgdir, (void*) ADD, PGSIZE, PADDR(mem), PTE_W|PTE_U);
   memmove(mem, init, sz);
 
+  // befroe the very first process, we don't have any physical address space that can be shared
+  // we initialize the three physical address spaces here so they can be shared by mapping to 
+  // different virtual pages of different process
   if (sharedpg[0] == NULL) {
     for (int i=0; i<3; i++) {
       char *mem;
@@ -296,6 +299,11 @@ freevm(pde_t *pgdir)
 
   if(pgdir == 0)
     panic("freevm: no pgdir");
+  // in order to free physical memory pages, we have to use the virtual address of a process to
+  // find the corresponding phyical address first, otherwise, we don't know which physical address
+  // is the one that we want to free
+  // also, we don't want to free the shared memory pages, because they belong to other processes,
+  // so we only free the virtual address from USERTOP to ADD, which is 0x4000
   deallocuvm(pgdir, USERTOP, ADD);
   for(i = 0; i < NPDENTRIES; i++){
     if(pgdir[i] & PTE_P)
@@ -415,6 +423,7 @@ int grow_stack(uint addr) {
   return -1;
 }
 
+// this function is used to map a virtual address to the shared physical address
 void *shmget(int page_number) {
   // cprintf("proc->numsh: %d\n", proc->numsh);
 

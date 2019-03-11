@@ -91,10 +91,10 @@ exec(char *path, char **argv)
   proc->tf->eip = elf.entry;                // main
   proc->tf->esp = sp;                       // stack end
   proc->stack_end = (uint) PGROUNDDOWN(sp); // allocated stack page end
-  proc->shm[0] = 0;
-  proc->shm[1] = 0;
-  proc->shm[2] = 0;
-  proc->numsh = 0;
+  proc->shm[0] = 0; // shm[] stores whether a shared physical address is mapping 
+  proc->shm[1] = 0; // values of shm[0], shm[1], and shm[2] could be 0x1000, 0x2000, 0x3000
+  proc->shm[2] = 0; // but they won't be duplicated
+  proc->numsh = 0; // how many shared pages does this process has, from 0 to 3
   switchuvm(proc);
   freevm(oldpgdir);
 

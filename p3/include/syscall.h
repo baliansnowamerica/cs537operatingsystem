@@ -23,6 +23,6 @@
 #define SYS_sbrk   19
 #define SYS_sleep  20
 #define SYS_uptime 21
-#define SYS_shmget 22
+#define SYS_shmget 22 // in usys.s, which is a assembly language, the corresponding number is used
 
 #endif // _SYSCALL_H_

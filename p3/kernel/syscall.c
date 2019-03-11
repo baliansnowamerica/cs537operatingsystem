@@ -29,7 +29,8 @@ fetchint(struct proc *p, uint addr, int *ip)
     return -1;
   }
 
-  // if addr is in shared pages, and whether that shared page is mapped
+  // if addr+4 is in shared pages, and whether that shared page is mapped
+  // addr+4 > ? ensures that whole of the 32 bit instruction lies within the process's size limit
   if ((uint) PGROUNDDOWN(addr+4) > p->numsh && addr + 4 < PGSIZE*4) {
     cprintf("fetchint addr+4: proc %s, pid %d unmapping shared pages \n", p->name, p->pid);
     return -1;
@@ -48,13 +49,12 @@ fetchint(struct proc *p, uint addr, int *ip)
   }
 
   // if addr+4 is in the unmapping pages between heap and stack, return -1
-  // addr+4 > p->sz ensures that whole of the 32 bit instruction lies within the process's size limit
   if (addr + 4 > p->sz && addr + 4 < p->stack_end) {
     cprintf("fetchint addr+4: proc %s, pid %d heap-stack unmapping pages \n", proc->name, proc->pid);
     return -1; 
   }
 
-  // original
+  // original setting of xv6
   // if(addr >= p->sz || addr+4 > p->sz) return -1;
 
   *ip = *(int*)(addr);
@@ -88,27 +88,27 @@ fetchstr(struct proc *p, uint addr, char **pp)
   }
 
   // if addr is in the unmapping pages between heap and stack, return -1
-  // (uint) PGROUNDDOWN(p->tf->esp)
   if (addr >= p->sz && addr < p->stack_end) {
     cprintf("fetchstr: proc %s, pid %d heap-stack unmapping pages \n", proc->name, proc->pid);
     return -1; 
   }
 
-  // original
+  // original setting of xv6
   // if(addr >= p->sz) return -1;
 
+  // where the string starts
   *pp = (char*)addr;
-
   // if addr is in code/heap then last legal addr is p->sz.  
   if (addr < p->sz) 
     ep = (char*) p->sz;
   // otherwise, addr is in stack and last legal addr is USERTOP.
   else
     ep = (char*) USERTOP;
-
+  // find where the string ends by "null-terminator 0"
   for(s = *pp; s < ep; s++)
     if(*s == 0)
       return s - *pp;
+
   return -1;
 }
 
@@ -141,39 +141,37 @@ argptr(int n, char **pp, int size)
     return -1;  
   }
 
-  // if addr is in shared pages, and whether that shared page is mapped
+  // if i is in shared pages, and whether that shared page is mapped
   if ((uint) PGROUNDDOWN(i) > proc->numsh && i < PGSIZE*4) {
     cprintf("argptr i: proc %s, pid %d unmapping shared pages \n", proc->name, proc->pid);
     return -1;
   }
 
-  // if addr is in shared pages, and whether that shared page is mapped
+  // if i+size is in shared pages, and whether that shared page is mapped
   if ((uint) PGROUNDDOWN(i + size) > proc->numsh && i + size < PGSIZE*4) {
     cprintf("argptr i+size: proc %s, pid %d unmapping shared pages \n", proc->name, proc->pid);
     return -1;
   }
 
-  // if i is larger than USERTOP = 0xA0000 = 655360, return -1
+  // if i or i +size is larger than USERTOP = 0xA0000 = 655360, return -1
   if ((uint) i >= USERTOP || (uint) (i+size) > USERTOP) {
     cprintf("argptr: proc %s, pid %d larger than USERTOP \n", proc->name, proc->pid);
     return -1;  
   }
 
   // if i is in the unmapping pages between heap and stack, return -1
-  // (uint) PGROUNDDOWN(proc->tf->esp)
   if ((uint) i >= proc->sz && (uint) i < proc->stack_end) {
     cprintf("argptr i: proc %s, pid %d heap-stack unmapping pages \n", proc->name, proc->pid);
     return -1; 
   }
 
   // if i+size is in the unmapping pages between heap and stack, return -1
-  // (uint) PGROUNDDOWN(proc->tf->esp)
   if ((uint) i + size > proc->sz && (uint) i +size < proc->stack_end) {
     cprintf("argptr i+size: proc %s, pid %d heap-stack unmapping pages \n", proc->name, proc->pid);
     return -1; 
   }
 
-  // original 
+  // original setting of xv6
   // if((uint)i >= proc->sz || (uint)i+size > proc->sz) return -1;
 
   // ==============================================================================================
@@ -245,6 +243,10 @@ syscall(void)
 }
 
 // this fucntion is system call shared memory get (shmget)
+// int sys_shmget(void) is used to read inputs from user mode into kernel
+// in kernel mode, we use (int) shmget(page_number) to actuall do something
+// return 0 if the argument doesn't exist
+// return 0 if the argument is not 0, 1, or 2, because there are up to 3 pages that can be shared
 int sys_shmget(void) {
   int page_number;
   if (argint(0, &page_number) < 0) 
