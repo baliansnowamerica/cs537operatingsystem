@@ -17,6 +17,7 @@ values *gettercv = NULL;
 // but value can keep growing for a pair
 typedef struct dict_t {
     char *key;
+    int sv; // size of values
     values *value;
 } pair;
 
@@ -37,6 +38,8 @@ void MR_Emit(char *key, char *value) {
     for (int i=0; i<=pairsize; i++) {
         // when a specific key doesn't exist, create it in mapping data structure 
         if (i == pairsize) {
+            // size of values in this pair
+            mapping[i].sv ++;
             // key
             mapping[i].key = malloc(sizeof(char)*(strlen(key)+1));
             strcpy(mapping[i].key, key);
@@ -54,20 +57,18 @@ void MR_Emit(char *key, char *value) {
         }
         // when a specific key exist, updates its value 
         else if (strcmp(mapping[i].key, key) == 0) {
-
-            values *temp = mapping[i].value;
-            while (temp->next != NULL && strcmp(value, temp->next->value) <= 0) {
-                temp = temp->next;
-            }
+            // size of values in this pair
+            mapping[i].sv ++;
 
             // value of values, (*newvalues).value is equal to newvalues->value 
             values *newvalues = malloc(sizeof(values));
             newvalues->value = malloc(sizeof(char)*(strlen(value)+1));
             strcpy((*newvalues).value, value);
             // next of values
-            newvalues->next = temp->next;
+            newvalues->next = mapping[i].value;
             // all for values
-            temp->next = newvalues;
+            mapping[i].value = newvalues;
+
             break;
         }
     }
@@ -79,6 +80,13 @@ void MR_Emit(char *key, char *value) {
 int pair_comparator(const void *p, const void *q) { 
     return strcmp(((pair *) p)->key, ((pair *) q)->key);
 } 
+
+/**
+ * 
+ */
+int value_comparator(const void *p, const void *q) {
+    return strcmp((char *) p, (char *) q);
+}
 
 
 
@@ -147,38 +155,86 @@ void MR_Run(int argc, char *argv[], Mapper map, int num_mappers, Reducer reduce,
     //     pthread_join(p[i], NULL);
     // }
         
-    printf("argc: %d\n", argc);
-    for (int i=0; i<argc; i++) printf("argv[%d]: %s\n", i, argv[i]);
-    printf("num_mappers: %d\n", num_mappers);
-    printf("num_reducers: %d\n", num_reducers);
+    // printf("argc: %d\n", argc);
+    // for (int i=0; i<argc; i++) printf("argv[%d]: %s\n", i, argv[i]);
+    // printf("num_mappers: %d\n", num_mappers);
+    // printf("num_reducers: %d\n", num_reducers);
     
     for (int i=1; i<argc; i++) map(argv[i]);
 
-    // printf("here\n");
+    printf("before sort values\n");
+
+    // sort values of each key
+    for (int i=0; i<pairsize; i++) {
+        // create array for sorting
+        printf("mapping[%d].sv: %d\n", i, mapping[i].sv);
+        char *temparray[mapping[i].sv];
+        printf("gg\n");
+        int index = 0;
+        printf("fuck off\n");
+        values *temp = mapping[i].value;
+        printf("lala i: %d\n", i);
+        while (temp != NULL) {
+            temparray[index] = temp->value;
+            temp = temp->next;
+            index ++;
+        }
+        printf("tata\n");
+        // sorting array
+        qsort(&temparray, index, sizeof(char*), value_comparator); //
+        printf("haha index: %d, sv: %d\n", index, mapping[i].sv);
+        // update values linkedlist
+        temp = mapping[i].value;
+        
+        for (int j=0; j<index; j++) {
+            if (temp == NULL)
+                printf("temparray[%d]: %s \n", j, temparray[j]);
+            temp->value = temparray[j];
+            temp = temp->next;
+        }
+        printf("i %d done \n", i);
+    }
+
+    printf("before qsort\n");
+
+    // sort key
     qsort(&mapping, pairsize, sizeof(pair), pair_comparator);
 
-    // Reduce(char *key, Getter get_next, int partition_number)
-    for (int i=0; i<pairsize; i++) {
-        gettercv = NULL;
-        // printf("%s", mapping[i].key);
-        reduce(mapping[i].key, mygetter, num_reducers-1);
-    }
-    // printf("%s \n", mapping[pairsize-1].key);
-    // reduce(mapping[pairsize-1].key, mygetter, num_reducers);
-    
-    // printf("0th %s", mapping[0].key);
-    // printf("%s", mapping[pairsize-1].key);
-    // printf("19999th %s", mapping[19999].key);
-    
-    // for (int i=0; i<pairsize; i++) {
-    //     if (strcmp(mapping[i].key, "") != 0) {
-    //         printf("%s", mapping[i].key);
-    //     }
-    //     else {
-    //         printf("break\n");
-    //         break;
-    //     };
+
+    printf("pairsize: %d\n", pairsize);
+
+    // values *check = mapping[400].value;
+    // while (check->next != NULL) {
+    //     printf("%s\n", check->value);
+    //     check = check->next;
     // }
+    
+    printf("after qsort\n");
+
+    // creat an array for each partition, which is thread for reducer
+    // tp = threads pairs, which means that we store some pairs in a thread, and each thread has its own pair set
+    pair *tp[num_reducers][20000];
+    
+    // size of pairs of a thread, which means the number of pairs for each thread 
+    int stp[num_reducers];
+    for (int i=0; i<num_reducers; i++) stp[i] = 0; // initialize stp[i] to 0
+    
+    // update array of each partition, an array stores the pairs that need to be processed by the corresponding partition
+    for (int i=0; i<pairsize; i++) {
+        unsigned long index = partition(mapping[i].key, num_reducers);
+        tp[index][stp[index]] = &mapping[i];
+        stp[index] ++;
+    }
+
+    // Reduce(char *key, Getter get_next, int partition_number)
+    for (int i=0; i<num_reducers; i++) {
+        for (int j=0; j<stp[i]; j++) {
+            gettercv = NULL;
+            reduce(tp[i][j]->key, mygetter, i);
+        }
+    }
+    
+    // end of MR_Run
 }
 
 
