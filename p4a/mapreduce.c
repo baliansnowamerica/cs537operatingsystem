@@ -21,7 +21,7 @@ typedef struct dict_t {
     values *value;
 } pair;
 
-pair mapping[20000];
+pair mapping[11000];
 int pairsize = 0;
 
 /**
@@ -41,6 +41,8 @@ void MR_Emit(char *key, char *value) {
             // size of values in this pair
             mapping[i].sv ++;
             // key
+            // char *check = malloc(sizeof(char)*(strlen(key)+1));
+            // printf("lala check: %s\n", check);
             mapping[i].key = malloc(sizeof(char)*(strlen(key)+1));
             strcpy(mapping[i].key, key);
 
@@ -148,6 +150,7 @@ Getter mygetter = get;
  * 
  */
 void MR_Run(int argc, char *argv[], Mapper map, int num_mappers, Reducer reduce, int num_reducers, Partitioner partition) {
+    pairsize = 0;
     // pthread_t p[num_mappers];
     
     // for (int i=0; i<num_mappers; i++) {
@@ -162,46 +165,39 @@ void MR_Run(int argc, char *argv[], Mapper map, int num_mappers, Reducer reduce,
     
     for (int i=1; i<argc; i++) map(argv[i]);
 
-    printf("before sort values\n");
+    // printf("before sort values\n");
 
     // sort values of each key
     for (int i=0; i<pairsize; i++) {
         // create array for sorting
-        printf("mapping[%d].sv: %d\n", i, mapping[i].sv);
-        char *temparray[mapping[i].sv];
-        printf("gg\n");
+        char **temparray = malloc(sizeof(char *)*mapping[i].sv);
         int index = 0;
-        printf("fuck off\n");
         values *temp = mapping[i].value;
-        printf("lala i: %d\n", i);
         while (temp != NULL) {
             temparray[index] = temp->value;
             temp = temp->next;
             index ++;
         }
-        printf("tata\n");
         // sorting array
-        qsort(&temparray, index, sizeof(char*), value_comparator); //
-        printf("haha index: %d, sv: %d\n", index, mapping[i].sv);
+        qsort(temparray, index, sizeof(char*), value_comparator);
         // update values linkedlist
         temp = mapping[i].value;
         
         for (int j=0; j<index; j++) {
             if (temp == NULL)
-                printf("temparray[%d]: %s \n", j, temparray[j]);
             temp->value = temparray[j];
             temp = temp->next;
         }
-        printf("i %d done \n", i);
+        free(temparray);
     }
 
-    printf("before qsort\n");
+    // printf("before qsort\n");
 
     // sort key
     qsort(&mapping, pairsize, sizeof(pair), pair_comparator);
 
 
-    printf("pairsize: %d\n", pairsize);
+    // printf("pairsize: %d\n", pairsize);
 
     // values *check = mapping[400].value;
     // while (check->next != NULL) {
@@ -209,11 +205,11 @@ void MR_Run(int argc, char *argv[], Mapper map, int num_mappers, Reducer reduce,
     //     check = check->next;
     // }
     
-    printf("after qsort\n");
+    // printf("after qsort\n");
 
     // creat an array for each partition, which is thread for reducer
     // tp = threads pairs, which means that we store some pairs in a thread, and each thread has its own pair set
-    pair *tp[num_reducers][20000];
+    pair *tp[num_reducers][11000];
     
     // size of pairs of a thread, which means the number of pairs for each thread 
     int stp[num_reducers];
@@ -234,6 +230,20 @@ void MR_Run(int argc, char *argv[], Mapper map, int num_mappers, Reducer reduce,
         }
     }
     
+    
+    for (int i=0; i<pairsize; i++) {
+        // free key
+        free(mapping[i].key);
+        // free values
+        values *temp = mapping[i].value;
+        while (temp != NULL) {
+            values *forfree = temp->next;
+            free(temp->value);
+            free(temp);
+            temp = forfree;
+        }
+    }
+
     // end of MR_Run
 }
 
