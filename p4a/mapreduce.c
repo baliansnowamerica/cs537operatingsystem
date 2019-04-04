@@ -5,6 +5,8 @@
 #include <pthread.h>
 #include "mapreduce.h"
 
+pthread_mutex_t mlock;
+
 // linkedlist of values, and each value has its own data 
 // one key could be corresponding to many values in a pair
 typedef struct node_t {
@@ -13,8 +15,8 @@ typedef struct node_t {
 } value;
 
 // global getter current value
-// gettercv is used to point to address of a "variable value" in the linkedlist
-value *gettercv = NULL;
+// gettercvs is used to point to address of a "variable value" in the linkedlist
+value **gettercvs;
 
 // a pair starts with a key and its corresponding value
 // the corresponding value is initialized as head of a linked list
@@ -155,6 +157,7 @@ void insertpairhashmap(pairhashmap *map, pair *newpair, int index) {
  * One of a possible meaning could be "a specific key has occured value times".
  */
 void MR_Emit(char *key, char *value) {
+    pthread_mutex_lock(&mlock);
     // this function returns the index of a key for a hashmap
     int index = getindexhashmap(key, mapping->chainedbuckets);
     // this function returns an existed pair that corresponds to a given key in a hashmap, otherwise, return NULL
@@ -180,17 +183,19 @@ void MR_Emit(char *key, char *value) {
         // this function inserts new value into linked list of values for a key-value pair
         insertpairvalue(existedpair, value);
     }
+    pthread_mutex_unlock(&mlock);
 }
 
 /**
  * typedef char *(*Getter)(char *key, int partition_number);
  */
 char *get(char *key, int partition_number) {
+    // printf("deal with key: %s", key);
     // gettercv is used to point to address of a "variable value" in the linkedlist
     // gettercv != NULL means that we are already pointing to a value in a linkedlist
-    if (gettercv != NULL) {
-        gettercv = gettercv->nextv;
-        return gettercv == NULL? NULL:gettercv->data;
+    if (gettercvs[partition_number] != NULL) {
+        gettercvs[partition_number] = gettercvs[partition_number]->nextv;
+        return gettercvs[partition_number] == NULL? NULL:gettercvs[partition_number]->data;
     } 
 
     // get the index of matching pair in hashmap
@@ -200,8 +205,8 @@ char *get(char *key, int partition_number) {
     // there is no matching pair, return NULL
     if (existedpair == NULL) return NULL;
     else {
-        gettercv = existedpair->values;
-        return gettercv->data;
+        gettercvs[partition_number] = existedpair->values;
+        return gettercvs[partition_number]->data;
     }
 }
 
@@ -237,17 +242,66 @@ unsigned long MR_DefaultHashPartition(char *key, int num_partitions) {
     return hash % num_partitions;
 }
 
+Mapper gmap;
+Reducer greduce;
+
+/**
+ * Call map to update mapping
+ */
+void *mapthread(void *arg) {
+    gmap((char *) arg);
+    return NULL;
+}
+
+/**
+ * Call reduce to get mapping
+ */
+void *redthread(void *arg) {
+    int *indexpartition = ((void **) arg)[0];
+    // printf("thread %d start\n", *indexpartition);
+    pair **partitionself = ((void **) arg)[1];
+    int *partitionsize = ((void **) arg)[2];
+    // Reduce(char *key, Getter get_next, int partition_number)
+    for (int i=0; i<*partitionsize; i++) {
+        // printf("*indexpartition: %d, *partitionsize: %d\n", *indexpartition, *partitionsize );
+        // printf("partitionself[%d]->key: %s", i, partitionself[i]->key);
+        greduce(partitionself[i]->key, mygetter, *indexpartition);
+        gettercvs[*indexpartition] = NULL;
+    }
+    // printf("thread %d end\n", *indexpartition);
+    return NULL;
+}
+
 /**
  * 
  */
 void MR_Run(int argc, char *argv[], Mapper map, int num_mappers, Reducer reduce, int num_reducers, Partitioner partition) {
+    // initialize map lock
+    if (pthread_mutex_init(&mlock, NULL) != 0) {
+        printf("\n mutex init failed\n");
+        return;
+    }
+    // map threads
+    pthread_t mp[num_mappers];
+
     // initialize a hashmap with size = 37
     mapping = malloc(sizeof(pairhashmap));
     initpairhashmap(mapping, 37);
     
-    // call map to update mapping
-    for (int i=1; i<argc; i++) map(argv[i]);
-    printf("map done\n");
+    greduce = reduce;
+    gmap = map;
+    
+    for (int i=1; i<argc; i+=num_mappers) {
+        // create map threads
+        for (int j=0; j<num_mappers && i+j<argc; j++) {
+            pthread_create(&mp[j], NULL, mapthread, argv[i+j]);
+        }
+        // pthread_join would wait p to be finished
+        for (int j=0; j<num_mappers && i+j<argc; j++) {
+            pthread_join(mp[j], NULL);
+        }
+    }
+    // printf("map done\n");
 
     // sort values for each pair in the hashmap
     for (int i=0; i<mapping->chainedbuckets; i++) {
@@ -281,7 +335,7 @@ void MR_Run(int argc, char *argv[], Mapper map, int num_mappers, Reducer reduce,
             temppair = temppair->nextp;
         }
     }
-    printf("values sort done\n");
+    // printf("values sort done\n");
 
     // sort pairs by key
     // create an array for storing pairs in ascending order, and array index
@@ -301,7 +355,7 @@ void MR_Run(int argc, char *argv[], Mapper map, int num_mappers, Reducer reduce,
         // printf("chainedbucket: %d\n", i);
     }
     qsort(pairorder, ipairorder, sizeof(pair *), pair_comparator);
-    printf("keys sort done, ipairorder: %d\n", ipairorder);
+    // printf("keys sort done, ipairorder: %d\n", ipairorder);
 
     // size of pairs for a "reduce thread", which means the number of pairs for a "partition"
     int stp[num_reducers];
@@ -312,7 +366,7 @@ void MR_Run(int argc, char *argv[], Mapper map, int num_mappers, Reducer reduce,
         unsigned long index = partition(pairorder[i]->key, num_reducers);
         stp[index] ++;
     }
-    printf("get partition size done\n");
+    // printf("get partition size done\n");
 
     // creat an pairs array for each partition, which can be considered as reduce thread or reducer
     // pt = pairs of a thread, this means that we store some pairs in a thread, and each thread has its own pairs set
@@ -328,40 +382,62 @@ void MR_Run(int argc, char *argv[], Mapper map, int num_mappers, Reducer reduce,
         pt[index][stp[index]] = pairorder[i];
         stp[index] ++;
     }
-    printf("update partition done\n");
+    // printf("update partition done\n");
 
-    // Reduce(char *key, Getter get_next, int partition_number)
+    // lock threads
+    pthread_t lp[num_reducers];
+    int subindex[num_reducers];
+    gettercvs = malloc(sizeof(value *)*num_reducers);
+    void **subarg[num_reducers];
+
+    // create reduce threads
     for (int i=0; i<num_reducers; i++) {
-        for (int j=0; j<stp[i]; j++) {
-            gettercv = NULL;
-            reduce(pt[i][j]->key, mygetter, i);
-        }
+        subarg[i] = malloc(sizeof(void *)*3);
+        subindex[i] = i;
+        subarg[i][0] = &subindex[i];
+        subarg[i][1] = pt[i];
+        subarg[i][2] = &stp[i];
+        gettercvs[i] = NULL;
+        pthread_create(&lp[i], NULL, redthread, subarg[i]);
     }
-    printf("reduce done\n");
+
+    // pthread_join would wait p to be finished
+    for (int i=0; i<num_reducers; i++) {
+        pthread_join(lp[i], NULL);
+        free(subarg[i]);
+    }
+
+    // printf("reduce done\n");
     
-
     // free pairs and their values
-    // for (int i=0; i<ipairorder; i++) {
-    //     // free value linkedlist for each pair
-    //     value *tempvalue = pairorder[i]->values;
-    //     while (tempvalue != NULL) {
-    //         value *forfree = tempvalue->nextv;
-    //         free(tempvalue->data);
-    //         free(tempvalue->nextv);
-    //         free(tempvalue);
-    //         tempvalue = forfree;
-    //     }
-    //     // free pair
-    //     free(pairorder[i]->key);
-    //     free(pairorder[i]->nextp);
-    // }
+    for (int i=0; i<ipairorder; i++) {
+        // free value linkedlist for each pair
+        value *tempvalue = pairorder[i]->values;
+        while (tempvalue != NULL) {
+            value *forfree = tempvalue->nextv;
+            free(tempvalue->data); // newvalue->data = malloc(sizeof(char)*(strlen(data)+1));
+            free(tempvalue); // value *newvalue = malloc(sizeof(value));
+            tempvalue = forfree;
+        }
+        // free pair
+        free(pairorder[i]->key); // newpair->key = malloc(sizeof(char)*(strlen(key)+1));
+        free(pairorder[i]); // // pair *newpair = malloc(sizeof(pair)); // initialize memory
+    }
+    free(pairorder); // pair **pairorder = malloc(sizeof(pair *)*mapping->numcurpair);
 
-    // // free partitions
-    // for (int i=0; i<num_reducers; i++) {
-    //     free(pt[i]);
-    // } 
+    // free partitions
+    for (int i=0; i<num_reducers; i++) {
+        free(pt[i]); // pt[i] = malloc(sizeof(pair *)*stp[i]);
+    } 
 
-    // // free mapping
-    // free(mapping);
+    // free hash array
+    free(mapping->hasharray); // map->hasharray = malloc(sizeof(pair *)*initialsize); // memory size of this hashmap
+
+    // free mapping
+    free(mapping); // mapping = malloc(sizeof(pairhashmap));
+
+    // free gettercvs
+    free(gettercvs); // gettercvs = malloc(sizeof(value *)*num_reducers);
+    
     // end of MR_Run
 }
