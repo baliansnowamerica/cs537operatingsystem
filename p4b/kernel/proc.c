@@ -159,6 +159,58 @@ fork(void)
   return pid;
 }
 
+// clone(void(*fcn) (void *, void *), void *arg1, void *arg2, void *stack);
+int
+clone(void(*fcn) (void *, void *), void *arg1, void *arg2, void *stack) {
+  int i, pid;
+  struct proc *np;
+
+  // allocate a process slot in the process table
+  if((np = allocproc()) == 0)
+    return -1;
+
+  // the new thread’s np->pgdir should be the same as the parent’s 
+  // they share the same address space, and thus have the same page table.
+  np->pgdir = proc->pgdir;
+  np->sz = proc->sz;
+  np->parent = proc;
+  *np->tf = *proc->tf;
+  np->tstack = (uint) stack; // top pointer of stack of thread
+  np->tf->eax = 0;
+
+  // grow stack
+  uint ustack[3];
+  ustack[0] = 0xffffffff;
+  ustack[1] = (uint) arg1;
+  ustack[2] = (uint) arg2;
+
+  uint sp = (uint) stack + PGSIZE - sizeof(uint)*3;
+  // copyout(pde_t *pgdir, uint va, void *p, uint len) copies len bytes from p to user address va 
+  // in page table pgdir. Most useful when pgdir is not the current page table.
+  // it's copying argv[argc] to the user address which starts from pgdir 
+  if(copyout(np->pgdir, sp, ustack, sizeof(uint)*3) < 0)
+    return -1;
+
+  np->tf->eip = (uint) fcn;
+  np->tf->esp = sp;
+
+  // below is like copy the files that parent are used to child 
+  // struct file is defined in file.h
+  for (i = 0; i < NOFILE; i++)
+    if (proc->ofile[i])
+      np->ofile[i] = filedup(proc->ofile[i]);
+
+  // below is like copy the current working directory that parent is used to child 
+  np->cwd = idup(proc->cwd);
+
+  // set child process np parameters
+  pid = np->pid;
+  np->state = RUNNABLE;
+  safestrcpy(np->name, proc->name, sizeof(proc->name));
+
+  return pid;
+}
+
 // Exit the current process.  Does not return.
 // An exited process remains in the zombie state
 // until its parent calls wait() to find out it exited.
@@ -188,9 +240,12 @@ exit(void)
   wakeup1(proc->parent);
 
   // Pass abandoned children to init.
-  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+  {
     if(p->parent == proc){
       p->parent = initproc;
+      if(p->pgdir != proc->pgdir)
+        p = 0;
       if(p->state == ZOMBIE)
         wakeup1(initproc);
     }
@@ -209,13 +264,15 @@ wait(void)
 {
   struct proc *p;
   int havekids, pid;
-
   acquire(&ptable.lock);
   for(;;){
     // Scan through table looking for zombie children.
     havekids = 0;
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->parent != proc)
+      // current process = proc, and child process is p
+      // p->parent != proc = p means p is not child process of proc
+      // p->pgdir == proc->pgdir means p is a thread of proc
+      if(p->parent != proc || p->pgdir == proc->pgdir)
         continue;
       havekids = 1;
       if(p->state == ZOMBIE){
@@ -230,6 +287,49 @@ wait(void)
         p->name[0] = 0;
         p->killed = 0;
         release(&ptable.lock);
+        return pid;
+      }
+    }
+
+    // No point waiting if we don't have any children.
+    if(!havekids || proc->killed){
+      release(&ptable.lock);
+      return -1;
+    }
+
+    // Wait for children to exit.  (See wakeup1 call in proc_exit.)
+    sleep(proc, &ptable.lock);  //DOC: wait-sleep
+  }
+}
+
+int
+join(void **stack)
+{
+  struct proc *p;
+  int havekids, pid;
+
+  acquire(&ptable.lock);
+  for(;;){
+    // Scan through table looking for zombie children.
+    havekids = 0;
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      // only consider child threads
+      if(p->parent != proc || p->pgdir != proc->pgdir)
+        continue;
+      havekids = 1;
+      if(p->state == ZOMBIE){
+        // Found one.
+        pid = p->pid;
+        kfree(p->kstack);
+        p->kstack = 0;
+        p->state = UNUSED;
+        p->pid = 0;
+        p->parent = 0;
+        p->name[0] = 0;
+        p->killed = 0;
+        *stack = (void *) p->tstack;
+        release(&ptable.lock);
+    
         return pid;
       }
     }

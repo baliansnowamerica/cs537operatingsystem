@@ -5,8 +5,10 @@ struct stat;
 
 // system calls
 int fork(void);
+int clone(void(*fcn) (void *, void *), void *arg1, void *arg2, void *stack);
 int exit(void) __attribute__((noreturn));
 int wait(void);
+int join(void **stack);
 int pipe(int*);
 int write(int, void*, int);
 int read(int, void*, int);
