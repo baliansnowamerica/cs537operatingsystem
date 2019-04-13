@@ -105,18 +105,37 @@ userinit(void)
 // Return 0 on success, -1 on failure.
 int
 growproc(int n)
-{
+{ 
+  // when there are two threads running and trying to grow heap by calling sbrk
+  // we will meet and race case, in order to avoid race case, we need to use lock
+  // to create mutual exclusive
+  acquire(&ptable.lock);
   uint sz;
-  
   sz = proc->sz;
+  
+  // release lock when allocuvm or deallocuvm fail
   if(n > 0){
-    if((sz = allocuvm(proc->pgdir, sz, sz + n)) == 0)
+    if((sz = allocuvm(proc->pgdir, sz, sz + n)) == 0) {
+      release(&ptable.lock); 
       return -1;
+    }
   } else if(n < 0){
-    if((sz = deallocuvm(proc->pgdir, sz, sz + n)) == 0)
+    if((sz = deallocuvm(proc->pgdir, sz, sz + n)) == 0) {
+      release(&ptable.lock);
       return -1;
+    }
   }
   proc->sz = sz;
+
+  struct proc *p;
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      // only consider threads (including parent process)
+      // when a thread sets the heap, we need to update all its sibling threads 
+      if(p->pgdir == proc->pgdir)
+        p->sz = proc->sz;
+  }
+  release(&ptable.lock);
+
   switchuvm(proc);
   return 0;
 }
@@ -162,21 +181,21 @@ fork(void)
 // clone(void(*fcn) (void *, void *), void *arg1, void *arg2, void *stack);
 int
 clone(void(*fcn) (void *, void *), void *arg1, void *arg2, void *stack) {
+  // cprintf("clone stack: %d, proc->sz: %d\n", stack, proc->sz);
   int i, pid;
   struct proc *np;
 
   // allocate a process slot in the process table
   if((np = allocproc()) == 0)
     return -1;
-
   // the new thread’s np->pgdir should be the same as the parent’s 
   // they share the same address space, and thus have the same page table.
   np->pgdir = proc->pgdir;
-  np->sz = proc->sz;
+  np->sz = proc->sz; // cprintf("proc->sz: %d\n", proc->sz);
   np->parent = proc;
   *np->tf = *proc->tf;
   np->tstack = (uint) stack; // top pointer of stack of thread
-  np->tf->eax = 0;
+  np->tf->eax = 0; // accumulator register is used to stored temporary data for computing 
 
   // grow stack
   uint ustack[3];
@@ -191,7 +210,7 @@ clone(void(*fcn) (void *, void *), void *arg1, void *arg2, void *stack) {
   if(copyout(np->pgdir, sp, ustack, sizeof(uint)*3) < 0)
     return -1;
 
-  np->tf->eip = (uint) fcn;
+  np->tf->eip = (uint) fcn; // where the function of this thread starts
   np->tf->esp = sp;
 
   // below is like copy the files that parent are used to child 
@@ -240,12 +259,12 @@ exit(void)
   wakeup1(proc->parent);
 
   // Pass abandoned children to init.
-  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-  {
+  // when a thread is abandoned by its parent, we set its partent to initproc
+  // initproc will somehow set the thread to zombie after the thread exits
+  // but we don't know how this be done by initproc 
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
     if(p->parent == proc){
       p->parent = initproc;
-      if(p->pgdir != proc->pgdir)
-        p = 0;
       if(p->state == ZOMBIE)
         wakeup1(initproc);
     }
@@ -276,11 +295,20 @@ wait(void)
         continue;
       havekids = 1;
       if(p->state == ZOMBIE){
+
+        // only free pgdir if no thread is using
+        struct proc *q;
+        int count = 0;
+        for (q = ptable.proc; q < &ptable.proc[NPROC]; q++)
+          if (q->pgdir == p->pgdir) count++;
+        if (count == 1) freevm(p->pgdir);
+        else p->pgdir = NULL;
+
         // Found one.
         pid = p->pid;
         kfree(p->kstack);
         p->kstack = 0;
-        freevm(p->pgdir);
+        // freevm(p->pgdir);
         p->state = UNUSED;
         p->pid = 0;
         p->parent = 0;
@@ -489,7 +517,8 @@ wakeup(void *chan)
 // to user space (see trap in trap.c).
 int
 kill(int pid)
-{
+{ 
+  // if (pid%1000 == 0) cprintf("kill pid %d\n", pid);
   struct proc *p;
 
   acquire(&ptable.lock);

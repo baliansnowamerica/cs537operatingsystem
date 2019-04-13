@@ -103,3 +103,35 @@ memmove(void *vdst, void *vsrc, int n)
     *dst++ = *src++;
   return vdst;
 }
+
+// thread library
+void 
+lock_init(lock_t *lock)
+{
+  lock->ticket = 0;
+  lock->turn = 0;
+}
+
+static inline int fetch_and_add(int* variable, int value)
+{
+  __asm__ volatile("lock; xaddl %0, %1"
+        : "+r" (value), "+m" (*variable) // input+output
+        : // No input-only
+        : "memory"
+      );
+  return value;
+}
+
+void 
+lock_acquire(lock_t *lock)
+{
+  int myturn = fetch_and_add(&lock->ticket, 1);
+  while (lock->turn != myturn)
+    ; // spin
+}
+
+void 
+lock_release(lock_t *lock)
+{
+  lock->turn = lock->turn + 1;
+}

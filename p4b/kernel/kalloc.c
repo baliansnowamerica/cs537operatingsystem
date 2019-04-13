@@ -45,7 +45,6 @@ kfree(char *v)
 
   // Fill with junk to catch dangling refs.
   memset(v, 1, PGSIZE);
-
   acquire(&kmem.lock);
   r = (struct run*)v;
   r->next = kmem.freelist;

@@ -21,6 +21,7 @@ sys_clone(void)
   }
 
   if ((uint)stack % PGSIZE != 0 || (proc->sz - (uint)stack) < PGSIZE) {
+    cprintf("stack %d is not page aligned.\n", stack);
     return -1;
   }
 
